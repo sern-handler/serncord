@@ -3,6 +3,7 @@ import { Gateway, GatewayEvents } from "./gateway/index.js";
 import { Intents, OpCode } from "./gateway/types.js";
 import { wait } from "./tools.js";
 
+import "dotenv/config.js";
 const gw = new Gateway({ url: "wss://gateway.discord.gg" });
 
 const INCOMING = `\x1b[1;34mRECV\x1b[0m`;
@@ -11,8 +12,7 @@ const OUTGOING = `\x1b[1;32mSEND\x1b[0m`;
 gw.start();
 gw.on(GatewayEvents.RawOpen, () => {
   console.log(`${INCOMING} (opened)`);
-  const token =
-    "MTI2NzYxNzMwNjk1NjEzNjQ4MA.GghhmO.7WzrK20o0lEapM-vRc-bB0tx-570PK4DGXQBYk";
+  const token: string = process.env.TOKEN!; // to all commit history viewers, the value of this has since changed.
   gw.send(OpCode.Identify, {
     intents: Intents.GuildMessages,
     properties: { browser: "serncord", device: "serncord", os: "win10" },
@@ -58,7 +58,7 @@ gw.on(GatewayEvents.Heartbeat, async (x) => {
 });
 
 gw.on(GatewayEvents.Ready, (x) => {
-  console.log("READY");
+  console.log(INCOMING, "Ready");
 });
 
 gw.on(GatewayEvents.MessageCreate, (x) => {
