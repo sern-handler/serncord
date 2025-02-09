@@ -28,8 +28,8 @@ import { InviteTargetType } from "../types/invite.js";
 export interface RawPayload<T extends OpCode> {
   op: T;
   d: DataForOpCode[T];
-  s: number | null;
-  t: string | null;
+  s?: number;
+  t?: string;
 }
 
 export enum OpCode {

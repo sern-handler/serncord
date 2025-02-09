@@ -6,7 +6,7 @@ export interface RawGatewayOptions {
 }
 
 export interface GatewayCache {
-  last_seq: number | null;
+  last_seq?: number;
   heartbeat_interval: number;
 }
 
@@ -15,7 +15,7 @@ export class Gateway extends EventEmitter<GatewayEventMethods> {
   public cache: GatewayCache;
   public constructor(private options: RawGatewayOptions) {
     super();
-    this.cache = { last_seq: null, heartbeat_interval: 0 };
+    this.cache = { heartbeat_interval: 0 };
     this.ws = new WebSocket(this.options.url);
   }
 
@@ -56,7 +56,7 @@ export class Gateway extends EventEmitter<GatewayEventMethods> {
     this.ws.addEventListener("message", (x) => {
       this.emit(GatewayEvents.RawMessage, x);
 
-      const packet: RawPayload<OpCode> = JSON.parse(x.data);
+      const packet: RawPayload<OpCode> = JSON.parse(x.data, (k, v) => v === null ? undefined : v);
       this.emit(GatewayEvents.Message, packet);
 
       this.cache.last_seq = packet.s;
@@ -110,7 +110,7 @@ export enum GatewayEvents {
   Dispatch,
 
   // dispatch
-  
+
   Ready = "READY",
   ApplicationCommandPermissionsUpdate = "APPLICATION_COMMAND_PERMISSIONS_UPDATE",
   AutoModerationRuleCreate = "AUTO_MODERATION_RULE_CREATE",

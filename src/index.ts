@@ -68,5 +68,5 @@ gw.on(GatewayEvents.MessageCreate, (x) => {
     util.inspect(x, { depth: 1, colors: true })
   );
 
-  console.log(INCOMING, x.content);
+  console.log(INCOMING, { content: x.content });
 });
