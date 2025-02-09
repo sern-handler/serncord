@@ -1,0 +1,23 @@
+{
+  "name": "serncord",
+  "version": "0.0.1",
+  "main": "dist/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sern-handler/serncord.git"
+  },
+  "author": "trueharuu",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/sern-handler/serncord/issues"
+  },
+  "homepage": "https://github.com/sern-handler/serncord#readme",
+  "description": "",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^22.13.1"
+  }
+}
