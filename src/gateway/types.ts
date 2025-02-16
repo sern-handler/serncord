@@ -390,7 +390,7 @@ export interface UnavailableGuild {
   unavailable: true;
 }
 
-export enum Intents {
+export enum GatewayIntents {
   Guilds = 1 << 0,
   GuildMembers = 1 << 1,
   GuildModeration = 1 << 2,

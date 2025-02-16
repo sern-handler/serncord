@@ -1,26 +1,47 @@
 import EventEmitter from "node:events";
-import { DataForOpCode, OpCode, RawPayload, RawPayloadData } from "./types.js";
+import {
+  DataForOpCode,
+  IdentifyConnectionProperties,
+  OpCode,
+  RawPayload,
+  RawPayloadData,
+} from "./types.js";
+import { Intents, wait } from "../tools.js";
 
 export interface RawGatewayOptions {
   url: string;
+  token: string;
+  intents: Intents;
+  properties: IdentifyConnectionProperties;
 }
+
+export const DefaultGatewayOptions: RawGatewayOptions = {
+  url: "wss://gateway.discord.gg",
+  token: "",
+  intents: new Intents(),
+  properties: { browser: "serncord", device: "serncord", os: "sern" },
+};
 
 export interface GatewayCache {
   last_seq?: number;
   heartbeat_interval: number;
 }
 
-export class Gateway extends EventEmitter<GatewayEventMethods> {
+export class Gateway extends EventEmitter {
   private ws: WebSocket;
   public cache: GatewayCache;
-  public constructor(private options: RawGatewayOptions) {
+  private options: RawGatewayOptions;
+  public constructor(
+    options: Partial<RawGatewayOptions> = DefaultGatewayOptions
+  ) {
     super();
+    this.options = Object.assign({}, DefaultGatewayOptions, options);
     this.cache = { heartbeat_interval: 0 };
     this.ws = new WebSocket(this.options.url);
   }
 
   public on<K extends GatewayEvents>(
-    eventName: K,
+    eventName: K | `${K}`,
     listener: Listener<K>
   ): this {
     super.on(eventName, listener as never);
@@ -28,7 +49,7 @@ export class Gateway extends EventEmitter<GatewayEventMethods> {
   }
 
   public once<K extends GatewayEvents>(
-    eventName: K,
+    eventName: K | `${K}`,
     listener: Listener<K>
   ): this {
     super.once(eventName, listener as never);
@@ -36,28 +57,33 @@ export class Gateway extends EventEmitter<GatewayEventMethods> {
   }
 
   public off<K extends GatewayEvents>(
-    eventName: K,
+    eventName: K | `${K}`,
     listener: Listener<K>
   ): this {
     super.off(eventName, listener as never);
     return this;
   }
 
-  public start() {
-    this.ws.addEventListener("open", (x) =>
-      this.emit(GatewayEvents.RawOpen, x)
-    );
-    this.ws.addEventListener("close", (x) =>
-      this.emit(GatewayEvents.RawClosed, x)
-    );
-    this.ws.addEventListener("error", (x) =>
-      this.emit(GatewayEvents.RawError, x)
-    );
-    this.ws.addEventListener("message", (x) => {
-      this.emit(GatewayEvents.RawMessage, x);
+  public emit<K extends GatewayEvents>(
+    eventName: K | `${K}`,
+    ...args: GatewayEventMethods[K]
+  ): boolean {
+    return super.emit(eventName, ...args);
+  }
 
-      const packet: RawPayload<OpCode> = JSON.parse(x.data, (k, v) => v === null ? undefined : v);
-      this.emit(GatewayEvents.Message, packet);
+  public start() {
+    this.ws.addEventListener("open", (x) => this.emit(GatewayEvents.Open, x));
+    this.ws.addEventListener("close", (x) =>
+      this.emit(GatewayEvents.Closed, x)
+    );
+    this.ws.addEventListener("error", (x) => this.emit(GatewayEvents.Error, x));
+    this.ws.addEventListener("message", (x) => {
+      this.emit(GatewayEvents.Message, x);
+
+      const packet: RawPayload<OpCode> = JSON.parse(x.data, (k, v) =>
+        v === null ? undefined : v
+      );
+      this.emit(GatewayEvents.Packet, packet);
 
       this.cache.last_seq = packet.s;
 
@@ -89,25 +115,44 @@ export class Gateway extends EventEmitter<GatewayEventMethods> {
   }
 
   public send<K extends OpCode>(op: K, data: DataForOpCode[K]) {
-    this.emit(GatewayEvents.OutgoingMessage, { op, data });
+    this.emit(GatewayEvents.Send, { op, data });
     this.ws.send(JSON.stringify({ op, d: data }));
+  }
+
+  public async login() {
+    this.start();
+    this.on(GatewayEvents.Open, () => {
+      this.send(OpCode.Identify, {
+        ...this.options,
+        intents: this.options.intents.bits(),
+      });
+    });
+
+    this.on(GatewayEvents.HeartbeatAck, async () => {
+      await wait(this.cache.heartbeat_interval);
+      this.send(OpCode.Heartbeat, null);
+    });
+
+    this.on(GatewayEvents.Heartbeat, async () => {
+      this.send(OpCode.Heartbeat, null);
+    });
   }
 }
 
 export enum GatewayEvents {
-  RawOpen,
-  RawMessage,
-  RawClosed,
-  RawError,
-  Message,
-  OutgoingMessage,
+  Open = "RAW_OPEN",
+  Message = "MESSAGE",
+  Closed = "CLOSED",
+  Error = "ERROR",
+  Packet = "PACKET",
+  Send = "SEND",
 
   // opcode specific
-  Hello,
-  Identify,
-  Heartbeat,
-  HeartbeatAck,
-  Dispatch,
+  Hello = "HELLO",
+  Identify = "IDENTIFY",
+  Heartbeat = "HEARTBEAT",
+  HeartbeatAck = "HEARTBEAT_ACK",
+  Dispatch = "DISPATCH",
 
   // dispatch
 
@@ -187,33 +232,31 @@ export enum GatewayEvents {
 }
 
 export interface GatewayEventMethods extends Record<GatewayEvents, any[]> {
-  [GatewayEvents.RawOpen]: [Event];
-  [GatewayEvents.RawMessage]: [MessageEvent];
-  [GatewayEvents.Message]: [RawPayload<OpCode>];
+  [GatewayEvents.Open]: [Event];
+  [GatewayEvents.Message]: [MessageEvent];
+  [GatewayEvents.Packet]: [RawPayload<OpCode>];
   [GatewayEvents.Hello]: [RawPayload<OpCode.Hello>];
   [GatewayEvents.Identify]: [RawPayloadData.Identify];
   [GatewayEvents.Heartbeat]: [RawPayloadData.Heartbeat];
   [GatewayEvents.HeartbeatAck]: [];
-  [GatewayEvents.OutgoingMessage]: [
-    { op: OpCode; data: DataForOpCode[OpCode] }
-  ];
+  [GatewayEvents.Send]: [{ op: OpCode; data: DataForOpCode[OpCode] }];
   [GatewayEvents.Dispatch]: [any];
   [GatewayEvents.Ready]: [RawPayloadData.Ready];
 
   [GatewayEvents.ApplicationCommandPermissionsUpdate]: [
-    RawPayloadData.ApplicationCommandPermissionsUpdate
+    RawPayloadData.ApplicationCommandPermissionsUpdate,
   ];
   [GatewayEvents.AutoModerationRuleCreate]: [
-    RawPayloadData.AutoModerationRuleCreate
+    RawPayloadData.AutoModerationRuleCreate,
   ];
   [GatewayEvents.AutoModerationRuleUpdate]: [
-    RawPayloadData.AutoModerationRuleUpdate
+    RawPayloadData.AutoModerationRuleUpdate,
   ];
   [GatewayEvents.AutoModerationRuleDelete]: [
-    RawPayloadData.AutoModerationRuleDelete
+    RawPayloadData.AutoModerationRuleDelete,
   ];
   [GatewayEvents.AutoModerationActionExecution]: [
-    RawPayloadData.AutoModerationActionExecution
+    RawPayloadData.AutoModerationActionExecution,
   ];
   [GatewayEvents.ChannelCreate]: [RawPayloadData.ChannelCreate];
   [GatewayEvents.ChannelUpdate]: [RawPayloadData.ChannelUpdate];
@@ -232,14 +275,14 @@ export interface GatewayEventMethods extends Record<GatewayEvents, any[]> {
   [GatewayEvents.GuildUpdate]: [RawPayloadData.GuildUpdate];
   [GatewayEvents.GuildDelete]: [RawPayloadData.GuildDelete];
   [GatewayEvents.GuildAuditLogEntryCreate]: [
-    RawPayloadData.GuildAuditLogEntryCreate
+    RawPayloadData.GuildAuditLogEntryCreate,
   ];
   [GatewayEvents.GuildBanAdd]: [RawPayloadData.GuildBanAdd];
   [GatewayEvents.GuildBanRemove]: [RawPayloadData.GuildBanRemove];
   [GatewayEvents.GuildEmojisUpdate]: [RawPayloadData.GuildEmojisUpdate];
   [GatewayEvents.GuildStickersUpdate]: [RawPayloadData.GuildStickersUpdate];
   [GatewayEvents.GuildIntegrationsUpdate]: [
-    RawPayloadData.GuildIntegrationsUpdate
+    RawPayloadData.GuildIntegrationsUpdate,
   ];
   [GatewayEvents.GuildMemberAdd]: [RawPayloadData.GuildMemberAdd];
   [GatewayEvents.GuildMemberRemove]: [RawPayloadData.GuildMemberRemove];
@@ -249,28 +292,28 @@ export interface GatewayEventMethods extends Record<GatewayEvents, any[]> {
   [GatewayEvents.GuildRoleUpdate]: [RawPayloadData.GuildRoleUpdate];
   [GatewayEvents.GuildRoleDelete]: [RawPayloadData.GuildRoleDelete];
   [GatewayEvents.GuildScheduledEventCreate]: [
-    RawPayloadData.GuildScheduledEventCreate
+    RawPayloadData.GuildScheduledEventCreate,
   ];
   [GatewayEvents.GuildScheduledEventUpdate]: [
-    RawPayloadData.GuildScheduledEventUpdate
+    RawPayloadData.GuildScheduledEventUpdate,
   ];
   [GatewayEvents.GuildScheduledEventDelete]: [
-    RawPayloadData.GuildScheduledEventDelete
+    RawPayloadData.GuildScheduledEventDelete,
   ];
   [GatewayEvents.GuildScheduledEventUserAdd]: [
-    RawPayloadData.GuildScheduledEventUserAdd
+    RawPayloadData.GuildScheduledEventUserAdd,
   ];
   [GatewayEvents.GuildScheduledEventUserRemove]: [
-    RawPayloadData.GuildScheduledEventUserRemove
+    RawPayloadData.GuildScheduledEventUserRemove,
   ];
   [GatewayEvents.GuildSoundboardSoundCreate]: [
-    RawPayloadData.GuildSoundboardSoundCreate
+    RawPayloadData.GuildSoundboardSoundCreate,
   ];
   [GatewayEvents.GuildSoundboardSoundUpdate]: [
-    RawPayloadData.GuildSoundboardSoundUpdate
+    RawPayloadData.GuildSoundboardSoundUpdate,
   ];
   [GatewayEvents.GuildSoundboardSoundDelete]: [
-    RawPayloadData.GuildSoundboardSoundDelete
+    RawPayloadData.GuildSoundboardSoundDelete,
   ];
   [GatewayEvents.SoundboardSounds]: [RawPayloadData.SoundboardSounds];
   [GatewayEvents.IntegrationCreate]: [RawPayloadData.IntegrationCreate];
@@ -286,10 +329,10 @@ export interface GatewayEventMethods extends Record<GatewayEvents, any[]> {
   [GatewayEvents.MessageReactionAdd]: [RawPayloadData.MessageReactionAdd];
   [GatewayEvents.MessageReactionRemove]: [RawPayloadData.MessageReactionRemove];
   [GatewayEvents.MessageReactionRemoveAll]: [
-    RawPayloadData.MessageReactionRemoveAll
+    RawPayloadData.MessageReactionRemoveAll,
   ];
   [GatewayEvents.MessageReactionRemoveEmoji]: [
-    RawPayloadData.MessageReactionRemoveEmoji
+    RawPayloadData.MessageReactionRemoveEmoji,
   ];
   [GatewayEvents.PresenceUpdate]: [RawPayloadData.PresenceUpdate];
   [GatewayEvents.StageInstanceCreate]: [RawPayloadData.StageInstanceCreate];
@@ -301,7 +344,7 @@ export interface GatewayEventMethods extends Record<GatewayEvents, any[]> {
   [GatewayEvents.TypingStart]: [RawPayloadData.TypingStart];
   [GatewayEvents.UserUpdate]: [RawPayloadData.UserUpdate];
   [GatewayEvents.VoiceChannelEffectSend]: [
-    RawPayloadData.VoiceChannelEffectSend
+    RawPayloadData.VoiceChannelEffectSend,
   ];
   [GatewayEvents.VoiceStateUpdate]: [RawPayloadData.UpdateVoiceState];
   [GatewayEvents.VoiceServerUpdate]: [RawPayloadData.VoiceServerUpdate];
